@@ -1,4 +1,10 @@
-const mins = ms => `${Math.round(ms / 60000)} min`;
+const mins = ms => {
+  const totalMins = Math.round(ms / 60000);
+  if (totalMins < 60) return `${totalMins} min`;
+  const hours = Math.floor(totalMins / 60);
+  const rem = totalMins % 60;
+  return rem ? `${hours} hr ${rem} min` : `${hours} hr`;
+};
 let state, selectedPeriod = "today";
 const el = (tag, className, value) => { const node = document.createElement(tag); if (className) node.className = className; if (value !== undefined) node.textContent = value; return node; };
 const byCategory = items => items.reduce((a, i) => ({ ...a, [i.category]: (a[i.category] || 0) + i.durationMs }), {});
@@ -12,6 +18,19 @@ function periodDetails() {
 }
 function itemsForPeriod() { const period = periodDetails(); return state.log.filter(item => item.endedAt >= period.start && item.endedAt <= period.end); }
 function summary(items) { const t = byCategory(items); return items.length ? `${mins(t.productive || 0)} productive, ${mins(t.distracting || 0)} distracting, and ${mins(t.neutral || 0)} neutral.` : "No active browser time recorded in this period."; }
+function dailyComparison(totals) {
+  const yesterday = byCategory(state.log.filter(item => item.endedAt >= startOfDay(1) && item.endedAt <= startOfDay(0) - 1));
+  const comparisons = ["productive", "distracting"].flatMap(category => {
+    const today = totals[category] || 0, prior = yesterday[category] || 0;
+    const label = category === "productive" ? "Productivity" : "Distraction time";
+    if (!prior) return today ? [`${label} recorded today (none yesterday)`] : [];
+    const change = Math.round(((today - prior) / prior) * 100);
+    if (!change) return [`${label} was unchanged`];
+    const direction = category === "distracting" ? (change < 0 ? "reduced" : "increased") : (change < 0 ? "decreased" : "increased");
+    return [`${label} ${direction} by ${Math.abs(change)}%`];
+  });
+  return `Compared to yesterday: ${comparisons.length ? comparisons.join(", ") : "no productive or distraction time to compare."}`;
+}
 function progressBar(percent) { const track = el("i"), fill = el("b"); fill.style.width = `${percent}%`; track.append(fill); return track; }
 function card(category, value, total) { const percent = total ? Math.round(value / total * 100) : 0, labels = { productive: "Productive", distracting: "Distraction", neutral: "Neutral" }; const node = el("article", `stat-card ${category}`); node.append(el("span", "", labels[category]), el("strong", "", mins(value)), el("small", "", `${percent}% of tracked time`), progressBar(percent)); return node; }
 function renderChart(totals, total) {
@@ -22,7 +41,7 @@ function renderChart(totals, total) {
 function renderLimits() {
   const entries = Object.entries(state.settings.limits || {}).sort((a,b) => a[0].localeCompare(b[0])), list = document.querySelector("#limits");
   if (!entries.length) { list.replaceChildren(el("li", "empty", "No daily limits set.")); return; }
-  list.replaceChildren(...entries.map(([domain, minutes]) => { const item = el("li"), remove = el("button", "", "Remove"); remove.onclick = async () => { delete state.settings.limits[domain]; await saveSettings(); }; item.append(el("strong", "", domain), el("span", "", `${minutes} min/day`), remove); return item; }));
+  list.replaceChildren(...entries.map(([domain, minutes]) => { const item = el("li"), remove = el("button", "", "Remove"); remove.onclick = async () => { delete state.settings.limits[domain]; await saveSettings(); }; item.append(el("strong", "", domain), el("span", "", `${mins(minutes * 60000)}/day`), remove); return item; }));
 }
 function renderDomains(items) {
   const totals = {}; items.forEach(item => totals[item.domain] = (totals[item.domain] || 0) + item.durationMs); const entries = Object.entries(totals).sort((a,b) => b[1] - a[1]).slice(0, 10), list = document.querySelector("#domains"), max = Math.max(...Object.values(totals), 1);
@@ -31,7 +50,7 @@ function renderDomains(items) {
 }
 function render() {
   const items = itemsForPeriod(), totals = byCategory(items), total = Object.values(totals).reduce((sum, value) => sum + value, 0), detail = periodDetails();
-  document.documentElement.dataset.theme = state.settings.theme || "system"; document.querySelector("#theme").value = state.settings.theme || "system"; document.querySelector("#period-label").textContent = detail.label; document.querySelector("#period-headline").textContent = summary(items); document.querySelector("#today").textContent = total ? `${mins(total)} tracked` : "Nothing tracked yet"; document.querySelector("#custom-range").hidden = selectedPeriod !== "custom";
+  document.documentElement.dataset.theme = state.settings.theme || "system"; document.querySelector("#theme").value = state.settings.theme || "system"; document.querySelector("#period-label").textContent = detail.label; document.querySelector("#period-headline").textContent = summary(items); document.querySelector("#daily-comparison").textContent = selectedPeriod === "today" ? dailyComparison(totals) : ""; document.querySelector("#today").textContent = total ? `${mins(total)} tracked` : "Nothing tracked yet"; document.querySelector("#custom-range").hidden = selectedPeriod !== "custom";
   document.querySelector("#category-cards").replaceChildren(...["productive", "distracting", "neutral"].map(c => card(c, totals[c] || 0, total))); renderChart(totals, total); renderDomains(items);
   ["productive", "distracting", "neutral"].forEach(category => document.querySelector(`#${category}`).value = (state.settings.rules[category] || []).join("\n")); document.querySelectorAll("[data-period]").forEach(button => button.classList.toggle("active", button.dataset.period === selectedPeriod)); renderLimits();
 }
